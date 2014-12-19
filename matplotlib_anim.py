@@ -15,8 +15,8 @@ class MatplotlibAnim(object):
             Reference to generator function used to generate data.
             Generator function must yield t, and data dictionary.
             Keys in the data dictionary should be identical to the keys used
-            in subplot_data_dict (i.e. data_dict[KEY] should contain the data
-            for the subplot specified by subplot_data_dict[KEY]).
+            in subplot_data (i.e. data_dict[KEY] should contain the data
+            for the subplot specified by subplot_data[KEY]).
 
             The data_gen_func should yield data as a tuple in the format:
 
@@ -26,7 +26,7 @@ class MatplotlibAnim(object):
             graph x and y data.
         subplot_shape:
             Shape (number of cells -- rows x cols) of the subplot grid.
-        subplot_data_dict:
+        subplot_data:
             Dictionary of dictionaries with configuration settings for each
             subplot in the subplot grid. The key value of the top-level
             dictionary correspondes to the key values in the data dictionary
@@ -50,25 +50,29 @@ class MatplotlibAnim(object):
             {'tl_loc': (1, 0), 'br_loc': (1, 2), 'dim': 3, 'color': 'b',
              'lw': 2}
     '''
+    #TODO: Make plots able to take axis as parameter
+    #      Test plotting of multiple data points vs only those within limits
+    #      Add 2D plot
+
     def __init__(self, data_gen_func, subplot_shape):
         self.data_gen_func = data_gen_func
 
         self.subplot_shape = subplot_shape
-        self.subplot_data_dict = {}
-
-        self.ax_dict = {}
-        self.type_dict = {}
-        self.line_dict = {}
+        self.subplot_data = {}
 
         self.fig = plt.figure()
 
-    def subplot_init(self, key, tl_loc, br_loc, plot_type):
-        if key not in self.type_dict.keys():
-            self.type_dict[key] = []
-        elif plot_type in self.type_dict[key]:
+    def subplot_key_check(self, key, plot_type):
+        if key not in self.subplot_data.keys():
+            self.subplot_data[key] = {}
+        elif plot_type in self.subplot_data[key].keys():
             raise RuntimeError('matplotlib_anim.MatplotlibAnim: ' +
                                '"%s" type for key: [%s] already exists' %
                                (plot_type, key))
+        self.subplot_data[key][plot_type] = {}
+
+    def subplot_init(self, key, tl_loc, br_loc, plot_type):
+        self.subplot_key_check(key, plot_type)
 
         if br_loc is None:
             br_loc = tl_loc
@@ -77,113 +81,136 @@ class MatplotlibAnim(object):
         ax = plt.subplot2grid(self.subplot_shape, tl_loc,
                               rowspan=br_loc[0] - tl_loc[0] + 1,
                               colspan=br_loc[1] - tl_loc[1] + 1)
-        self.ax_dict[key] = ax
-        self.type_dict[key].append(plot_type)
+        self.subplot_data[key][plot_type]['ax'] = ax
         return ax
 
     # ----------------------------------------------------------------------- #
     def _add_plot_common(self, key, tl_loc, br_loc, dims, init_buffer_size,
-                         autoscale_y, plot_type, **plot_args):
-        ax = self.subplot_init(key, tl_loc, br_loc, plot_type)
+                         autoscale_y, plot_type, ax, **plot_args):
+        if ax is None:
+            ax = self.subplot_init(key, tl_loc, br_loc, plot_type)
+        else:
+            self.subplot_key_check(key, plot_type)
 
         if init_buffer_size > 0:
             ax.set_xlim(0, init_buffer_size)
 
-        self.subplot_data_dict[key] = {'type': plot_type,
-                                       'dims': dims,
-                                       'autoscale_y': autoscale_y}
+        self.subplot_data[key][plot_type]['dims'] = dims
+        self.subplot_data[key][plot_type]['autoscale_y'] = autoscale_y
+        self.subplot_data[key][plot_type]['buffer_size'] = init_buffer_size
 
-        self.line_dict[key] = []
+        self.subplot_data[key][plot_type]['lines'] = []
         for d in range(dims):
             line, = ax.plot([], [], **plot_args)
-            self.line_dict[key].append(line)
+            self.subplot_data[key][plot_type]['lines'].append(line)
 
         return ax
 
-    def _plot_common_update(self, key, t_data, data, draw_artists):
-        ax = self.ax_dict[key]
-        plot_dim = self.subplot_data_dict[key]['dims']
+    def _plot_common_update(self, key, t_data, data, plot_type, draw_artists):
+        subplot_data = self.subplot_data[key][plot_type]
+
+        ax = subplot_data['ax']
+        plot_dim = subplot_data['dims']
 
         for d in range(plot_dim):
-            self.line_dict[key][d].set_data(t_data, data[d])
-            draw_artists.append(self.line_dict[key][d])
+            subplot_data['lines'][d].set_data(t_data, data[d])
+            draw_artists.append(subplot_data['lines'][d])
 
-        if self.subplot_data_dict[key]['autoscale_y']:
+        if subplot_data['autoscale_y']:
             ax.relim()
             ax.autoscale_view(scalex=False, scaley=True)
             ax.figure.canvas.draw()
 
     # ----------------------------------------------------------------------- #
-    def add_plot(self, key, tl_loc, br_loc=None, dims=1, init_buffer_size=0.5,
-                 autoscale_y=False, **plot_args):
+    def add_plot(self, key, tl_loc=(0, 0), br_loc=None, dims=1,
+                 init_buffer_size=0.5, autoscale_y=False, ax=None,
+                 **plot_args):
         return self._add_plot_common(key, tl_loc, br_loc, dims,
                                      init_buffer_size,
-                                     autoscale_y, 'plot', **plot_args)
+                                     autoscale_y, 'plot', ax, **plot_args)
 
     def plot_update(self, key, t_data, data, draw_artists):
-        ax = self.ax_dict[key]
+        ax = self.subplot_data[key]['plot']['ax']
 
         max_xlim = ax.get_xlim()[1]
         if max_xlim <= t_data[-1]:
             ax.set_xlim(ax.get_xlim()[0], max_xlim * 2)
             ax.figure.canvas.draw()
 
-        self._plot_common_update(key, t_data, data, draw_artists)
+        self._plot_common_update(key, t_data, data, 'plot', draw_artists)
 
     # ----------------------------------------------------------------------- #
-    def add_plot_static_x(self, key, tl_loc, br_loc=None, dims=1,
-                          autoscale_y=False, init_buffer_size=0.5, dt=0.001,
-                          **plot_args):
+    def add_plot_static_x(self, key, tl_loc=(0, 0), br_loc=None, dims=1,
+                          autoscale_y=False, buffer_size_s=0.5, dt=0.001,
+                          ax=None, **plot_args):
+        if buffer_size_s < 0:
+            raise RuntimeError('Buffer size (s) cannot be negative')
         return self._add_plot_common(key, tl_loc, br_loc, dims,
-                                     init_buffer_size, autoscale_y,
-                                     'plot_static_x', **plot_args)
+                                     buffer_size_s, autoscale_y,
+                                     'plot_static_x', ax, **plot_args)
 
     def plot_static_x_update(self, key, t_data, data, draw_artists):
-        ax = self.ax_dict[key]
+        subplot_data = self.subplot_data[key]['plot_static_x']
+
+        ax = subplot_data['ax']
         num_ticks = len(ax.xaxis.get_major_ticks())
 
-        buffer_size = t_data[-1] - t_data[0]
-        if ax.get_xlim()[1] < buffer_size:
-            ax.set_xlim(0, buffer_size)
-
+        buffer_size = subplot_data['buffer_size']
+        t_min = max(t_data[0], t_data[-1] - buffer_size)
         t_max = max(ax.get_xlim()[1], t_data[-1])
-        new_tick_labels = np.linspace(t_data[0], t_max, num=num_ticks,
+
+        new_tick_labels = np.linspace(t_min, t_max, num=num_ticks,
                                       endpoint=True)
         ax.xaxis.set_ticklabels(map(lambda t: "%0.2f" % t, new_tick_labels))
 
-        self._plot_common_update(key, t_data - t_data[0], data, draw_artists)
+        self._plot_common_update(key, t_data - t_min, data, 'plot_static_x',
+                                 draw_artists)
 
     # ----------------------------------------------------------------------- #
-    def add_plot_scroll_x(self, key, tl_loc, br_loc=None, dims=1,
-                          autoscale_y=False, init_buffer_size=0.5,
-                          **plot_args):
+    def add_plot_scroll_x(self, key, tl_loc=(0, 0), br_loc=None, dims=1,
+                          autoscale_y=False, buffer_size_s=0.5,
+                          ax=None, **plot_args):
+        if buffer_size_s < 0:
+            raise RuntimeError('Buffer size (s) cannot be negative')
         return self._add_plot_common(key, tl_loc, br_loc, dims,
-                                     init_buffer_size, autoscale_y,
-                                     'plot_scroll_x', **plot_args)
+                                     buffer_size_s, autoscale_y,
+                                     'plot_scroll_x', ax, **plot_args)
 
     def plot_scroll_x_update(self, key, t_data, data, draw_artists):
-        ax = self.ax_dict[key]
-        ax.set_xlim(t_data[0], max(t_data[-1], ax.get_xlim()[1]))
+        subplot_data = self.subplot_data[key]['plot_scroll_x']
+
+        ax = subplot_data['ax']
+
+        buffer_size = subplot_data['buffer_size']
+        t_min = max(t_data[0], t_data[-1] - buffer_size)
+        t_max = max(t_data[-1], ax.get_xlim()[1])
+
+        ax.set_xlim(t_min, t_max)
         ax.figure.canvas.draw()
 
-        self._plot_common_update(key, t_data, data, draw_artists)
+        self._plot_common_update(key, t_data, data, 'plot_scroll_x',
+                                 draw_artists)
 
     # ----------------------------------------------------------------------- #
-    def add_buffered_plot(self, key, tl_loc, br_loc=None, dims=1,
-                          autoscale_y=False, buffer_size=500, **plot_args):
+    def add_buffered_plot(self, key, tl_loc=(0, 0), br_loc=None, dims=1,
+                          autoscale_y=False, buffer_size=500, ax=None,
+                          **plot_args):
         ax = self._add_plot_common(key, tl_loc, br_loc, dims,
                                    buffer_size, autoscale_y, 'buffered_plot',
-                                   **plot_args)
-        self.subplot_data_dict[key]['data'] = [[] for _ in range(dims)]
-        self.subplot_data_dict[key]['buffer_size'] = buffer_size
+                                   ax, **plot_args)
+        self.subplot_data[key]['buffered_plot']['data'] = \
+            [[] for _ in range(dims)]
         ax.xaxis.set_ticklabels([])
         return ax
 
     def buffered_plot_update(self, key, t_data, data, draw_artists):
-        ax = self.ax_dict[key]
-        buffer_size = self.subplot_data_dict[key]['buffer_size']
-        buffer_data = self.subplot_data_dict[key]['data']
-        dims = self.subplot_data_dict[key]['dims']
+        subplot_data = self.subplot_data[key]['buffered_plot']
+
+        ax = subplot_data['ax']
+
+        buffer_size = subplot_data['buffer_size']
+        buffer_data = subplot_data['data']
+        dims = subplot_data['dims']
 
         if len(t_data) > 3:
             num_ticks = len(ax.xaxis.get_major_ticks())
@@ -201,25 +228,29 @@ class MatplotlibAnim(object):
             buffer_data[d] = buffer_data[d][-buffer_size:]
 
         self._plot_common_update(key, range(buffer_size)[:len(buffer_data[0])],
-                                 buffer_data, draw_artists)
+                                 buffer_data, 'buffered_plot', draw_artists)
 
     # ----------------------------------------------------------------------- #
-    def add_imshow(self, key, tl_loc, br_loc=None, shape=None, **plot_args):
+    def add_imshow(self, key, tl_loc=(0, 0), br_loc=None, shape=None, ax=None,
+                   **plot_args):
         plot_type = 'imshow'
-        ax = self.subplot_init(key, tl_loc, br_loc, plot_type)
+
+        if ax is None:
+            ax = self.subplot_init(key, tl_loc, br_loc, plot_type)
+        else:
+            self.subplot_key_check(key, plot_type)
 
         if shape is None:
             raise RuntimeError('matplotlib_anim.MatplotlibAnim: ' +
                                'shape must be defined for "imshow" subplot. ' +
                                'Given %s, expected tuple.' % (str(shape)))
 
-        self.subplot_data_dict[key] = {'type': plot_type,
-                                       'shape': shape}
+        self.subplot_data[key][plot_type]['shape'] = shape
 
         init_matrix = np.zeros(shape)
         init_matrix[0] = 1
         line = ax.imshow(init_matrix, **plot_args)
-        self.line_dict[key] = line
+        self.subplot_data[key][plot_type]['lines'] = line
 
         ax.set_xticks([])
         ax.set_yticks([])
@@ -228,9 +259,42 @@ class MatplotlibAnim(object):
 
     def imshow_update(self, key, t_data, data, draw_artists):
         im_data = np.reshape(data[:, -1],
-                             self.subplot_data_dict[key]['shape'])
-        self.line_dict[key].set_data(im_data)
-        draw_artists.append(self.line_dict[key])
+                             self.subplot_data[key]['imshow']['shape'])
+        self.subplot_data[key]['imshow']['lines'].set_data(im_data)
+        draw_artists.append(self.subplot_data[key]['imshow']['lines'])
+
+    # ----------------------------------------------------------------------- #
+    def add_plot2D(self, key, tl_loc=(0, 0), br_loc=None,
+                   buffer_size_s=0.5, ax=None, **plot_args):
+        ax = self._add_plot_common(key, tl_loc, br_loc, 1,
+                                   buffer_size_s, False, 'plot2D',
+                                   ax, **plot_args)
+        ax.set_xlim(-1, 1)
+        ax.set_ylim(-1, 1)
+        ax.xaxis.grid()
+        ax.yaxis.grid()
+        ax.set_aspect(1)
+
+        return ax
+
+    def plot2D_update(self, key, t_data, data, draw_artists):
+        subplot_data = self.subplot_data[key]['plot2D']
+
+        x_data = None
+        y_data = None
+
+        buffer_size = subplot_data['buffer_size']
+        if buffer_size < 0:
+            t_min = t_data[0]
+        else:
+            t_min = max(t_data[0], t_data[-1] - buffer_size)
+
+        valid_t_index = t_data > t_min
+        x_data = data[0, valid_t_index]
+        y_data = data[1, valid_t_index]
+
+        subplot_data['lines'][0].set_data(x_data, y_data)
+        draw_artists.append(subplot_data['lines'][0])
 
     # ----------------------------------------------------------------------- #
     def run_anim_func(self, data_from_func):
@@ -238,10 +302,11 @@ class MatplotlibAnim(object):
 
         draw_artists = []
         for key in data_dict.keys():
-            for plot_type in self.type_dict[key]:
-                getattr(self,
-                        self.subplot_data_dict[key]['type'] +
-                        '_update')(key, t_data, data_dict[key], draw_artists)
+            if key in self.subplot_data:
+                for plot_type in self.subplot_data[key].keys():
+                    getattr(self, plot_type + '_update')(key, t_data,
+                                                         data_dict[key],
+                                                         draw_artists)
 
         return draw_artists
 
