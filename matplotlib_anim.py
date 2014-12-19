@@ -54,13 +54,16 @@ class MatplotlibAnim(object):
     #      Test plotting of multiple data points vs only those within limits
     #      Add 2D plot
 
-    def __init__(self, data_gen_func, subplot_shape):
+    def __init__(self, data_gen_func, subplot_shape, fig=None):
         self.data_gen_func = data_gen_func
 
         self.subplot_shape = subplot_shape
         self.subplot_data = {}
 
-        self.fig = plt.figure()
+        if fig is None:
+            self.fig = plt.figure()
+        else:
+            self.fig = fig
 
     def subplot_key_check(self, key, plot_type):
         if key not in self.subplot_data.keys():
@@ -91,6 +94,7 @@ class MatplotlibAnim(object):
             ax = self.subplot_init(key, tl_loc, br_loc, plot_type)
         else:
             self.subplot_key_check(key, plot_type)
+            self.subplot_data[key][plot_type]['ax'] = ax
 
         if init_buffer_size > 0:
             ax.set_xlim(0, init_buffer_size)
@@ -141,8 +145,8 @@ class MatplotlibAnim(object):
 
     # ----------------------------------------------------------------------- #
     def add_plot_static_x(self, key, tl_loc=(0, 0), br_loc=None, dims=1,
-                          autoscale_y=False, buffer_size_s=0.5, dt=0.001,
-                          ax=None, **plot_args):
+                          autoscale_y=False, buffer_size_s=0.5, ax=None,
+                          **plot_args):
         if buffer_size_s < 0:
             raise RuntimeError('Buffer size (s) cannot be negative')
         return self._add_plot_common(key, tl_loc, br_loc, dims,
@@ -239,6 +243,7 @@ class MatplotlibAnim(object):
             ax = self.subplot_init(key, tl_loc, br_loc, plot_type)
         else:
             self.subplot_key_check(key, plot_type)
+            self.subplot_data[key][plot_type]['ax'] = ax
 
         if shape is None:
             raise RuntimeError('matplotlib_anim.MatplotlibAnim: ' +
