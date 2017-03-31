@@ -9,6 +9,38 @@ def is_iterable_and_not_str(obj):
     return isinstance(obj, Iterable) and not isinstance(obj, str)
 
 
+# Helper function to reshape image data
+def process_im_data(im_data, shape):
+    is_fail = False
+
+    if len(shape) > 2:
+        # Process color images
+        if shape[-1] == 3:
+            return im_data.reshape(shape)
+        elif shape[0] == 3:
+            new_shape = (shape[1], shape[2], shape[0])
+            return im_data.reshape(shape).T.reshape(new_shape).swapaxes(0, 1)
+        else:
+            is_fail = True
+    elif len(shape) == 2:
+        # Process BW images
+        return im_data.reshape(shape)
+    else:
+        is_fail = True
+
+    if is_fail:
+        raise RuntimeError('PROCESS IM DATA: Unknown image shape: %s' %
+                           str(shape))
+
+
+# Helper function to get default cmap for image data:
+def get_cmap(im_shape):
+    if len(im_shape) > 2:
+        return None
+    else:
+        return 'gray'
+
+
 class MatplotlibAnim(object):
     '''
         data_gen_func:
@@ -50,7 +82,7 @@ class MatplotlibAnim(object):
             {'tl_loc': (1, 0), 'br_loc': (1, 2), 'dim': 3, 'color': 'b',
              'lw': 2}
     '''
-    #TODO: Make plots able to take axis as parameter
+    # TODO: Make plots able to take axis as parameter
     #      Test plotting of multiple data points vs only those within limits
     #      Add 2D plot
 
@@ -93,17 +125,29 @@ class MatplotlibAnim(object):
         if ax is None:
             ax = self.subplot_init(key, tl_loc, br_loc, plot_type)
         else:
+            # If ax is given, find subplot with matching ax and use that
+            # buffer size instead
+            done = False
+            for k in self.subplot_data:
+                for pt in self.subplot_data[k]:
+                    if self.subplot_data[k][pt]['ax'] == ax:
+                        init_buffer_size = \
+                            self.subplot_data[k][pt]['buffer_size']
+                        done = True
+                if done:
+                    break
+
             self.subplot_key_check(key, plot_type)
             self.subplot_data[key][plot_type]['ax'] = ax
 
         if init_buffer_size > 0:
             ax.set_xlim(0, init_buffer_size)
 
-        self.subplot_data[key][plot_type]['dims'] = dims
         self.subplot_data[key][plot_type]['autoscale_y'] = autoscale_y
         self.subplot_data[key][plot_type]['buffer_size'] = init_buffer_size
-
+        self.subplot_data[key][plot_type]['dims'] = dims
         self.subplot_data[key][plot_type]['lines'] = []
+
         for d in range(dims):
             line, = ax.plot([], [], **plot_args)
             self.subplot_data[key][plot_type]['lines'].append(line)
@@ -236,7 +280,7 @@ class MatplotlibAnim(object):
 
     # ----------------------------------------------------------------------- #
     def add_imshow(self, key, tl_loc=(0, 0), br_loc=None, shape=None, ax=None,
-                   **plot_args):
+                   cmap=plt.get_cmap('gray'), **plot_args):
         plot_type = 'imshow'
 
         if ax is None:
@@ -252,7 +296,10 @@ class MatplotlibAnim(object):
 
         self.subplot_data[key][plot_type]['shape'] = shape
 
-        init_matrix = np.zeros(shape)
+        plot_args.setdefault('cmap', get_cmap(shape))
+
+        init_matrix = process_im_data(np.zeros(np.cumprod(shape)[-1]),
+                                      shape)
         init_matrix[0] = 1
         line = ax.imshow(init_matrix, **plot_args)
         self.subplot_data[key][plot_type]['lines'] = line
@@ -263,8 +310,10 @@ class MatplotlibAnim(object):
         return ax
 
     def imshow_update(self, key, t_data, data, draw_artists):
-        im_data = np.reshape(data[:, -1],
-                             self.subplot_data[key]['imshow']['shape'])
+        # im_data = np.reshape(data,
+        #                      self.subplot_data[key]['imshow']['shape'])
+        im_data = process_im_data(data,
+                                  self.subplot_data[key]['imshow']['shape'])
         self.subplot_data[key]['imshow']['lines'].set_data(im_data)
         draw_artists.append(self.subplot_data[key]['imshow']['lines'])
 
@@ -316,6 +365,9 @@ class MatplotlibAnim(object):
         return draw_artists
 
     def start(self, interval=30, **kwargs):
+        if len(self.subplot_data) < 1:
+            raise RuntimeError('Error: No plots have been added!')
+
         self.fig.tight_layout()
         self.anim = animation.FuncAnimation(self.fig, self.run_anim_func,
                                             self.data_gen_func,
